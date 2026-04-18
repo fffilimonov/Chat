@@ -47,15 +47,19 @@ final class InputViewModel: ObservableObject {
     }
 
     func reset() {
-        DispatchQueue.main.async { [weak self] in
-            self?.showPicker = false
-            self?.showGiphyPicker = false
-            self?.text = ""
-            self?.saveEditingClosure = nil
-            self?.attachments = InputViewAttachments()
-            self?.subscribeValidation()
-            self?.state = .empty
-        }
+        // Clear synchronously. The class is @MainActor, and `reset()` is only
+        // invoked from main-thread contexts (post-send and post-edit flows).
+        // The previous DispatchQueue.main.async wrapper added a runloop hop
+        // that raced with SwiftUI's re-render of the multiline TextField
+        // (axis: .vertical), causing the drafted text to sometimes persist
+        // after send. See upstream issue #210.
+        showPicker = false
+        showGiphyPicker = false
+        text = ""
+        saveEditingClosure = nil
+        attachments = InputViewAttachments()
+        subscribeValidation()
+        state = .empty
     }
 
     func send() {
@@ -236,9 +240,11 @@ private extension InputViewModel {
             createdAt: Date()
         )
         didSendMessage?(draft)
-        DispatchQueue.main.async { [weak self] in
-            self?.showActivityIndicator = false
-            self?.reset()
-        }
+        // Synchronously clear the input. @MainActor guarantees we're on main.
+        // Dispatching async added a runloop hop that raced with the TextField
+        // binding update — issue #210. Sync clear ensures the draft is gone
+        // before SwiftUI's next render pass.
+        showActivityIndicator = false
+        reset()
     }
 }
