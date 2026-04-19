@@ -212,6 +212,24 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
         if !isScrollEnabled {
             tableContentHeight = tableView.contentSize.height
         }
+
+        // Auto-scroll the viewport to the newest row after inserts. Without
+        // this, rows are added to the data source but the viewport stays
+        // wherever it was — the user sees their just-sent message stuck
+        // below the visible area (e.g. behind the keyboard). Scoped to
+        // `.conversation` chat type because `.comments` has different
+        // scroll expectations (new items appear at top, not bottom).
+        if type == .conversation && !splitInfo.insertOperations.isEmpty {
+            DispatchQueue.main.async {
+                guard tableView.numberOfSections > 0,
+                      tableView.numberOfRows(inSection: 0) > 0 else { return }
+                tableView.scrollToRow(
+                    at: IndexPath(row: 0, section: 0),
+                    at: .bottom,
+                    animated: true
+                )
+            }
+        }
     }
 
     // MARK: - Operations
