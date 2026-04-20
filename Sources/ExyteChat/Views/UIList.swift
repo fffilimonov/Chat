@@ -75,6 +75,47 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
             }
         }
 
+        // Re-anchor to the bottom after a keyboard appearance.
+        //
+        // When the keyboard slides up, SwiftUI's keyboard-avoidance shrinks
+        // the hosting container's frame. UITableView responds by nudging
+        // contentOffset.y a few pixels off zero, flipping
+        // `isScrolledToBottom` false. For tall last-row cells that's a
+        // visible jump — the cell's rendered portion changes on the next
+        // insert because UITableView preserves contentOffset.y verbatim
+        // across inserts. Snapping back to zero after the keyboard settles
+        // avoids the jump and keeps subsequent inserts visually stable.
+        //
+        // Only restore if the user was at the bottom before the transition —
+        // if they were mid-history, leave their position alone.
+        NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillShowNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            context.coordinator.wasAtBottomBeforeKeyboard = tableView.contentOffset.y <= 0
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardDidShowNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            guard context.coordinator.wasAtBottomBeforeKeyboard else { return }
+            if tableView.contentOffset.y != 0 {
+                tableView.setContentOffset(.zero, animated: false)
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardDidHideNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            guard context.coordinator.wasAtBottomBeforeKeyboard else { return }
+            if tableView.contentOffset.y != 0 {
+                tableView.setContentOffset(.zero, animated: false)
+            }
+        }
+
         DispatchQueue.main.async {
             shouldScrollToTop = {
                 tableView.contentOffset = CGPoint(x: 0, y: tableView.contentSize.height - tableView.frame.height)
@@ -211,24 +252,6 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
 
         if !isScrollEnabled {
             tableContentHeight = tableView.contentSize.height
-        }
-
-        // Auto-scroll the viewport to the newest row after inserts. Without
-        // this, rows are added to the data source but the viewport stays
-        // wherever it was — the user sees their just-sent message stuck
-        // below the visible area (e.g. behind the keyboard). Scoped to
-        // `.conversation` chat type because `.comments` has different
-        // scroll expectations (new items appear at top, not bottom).
-        if type == .conversation && !splitInfo.insertOperations.isEmpty {
-            DispatchQueue.main.async {
-                guard tableView.numberOfSections > 0,
-                      tableView.numberOfRows(inSection: 0) > 0 else { return }
-                tableView.scrollToRow(
-                    at: IndexPath(row: 0, section: 0),
-                    at: .bottom,
-                    animated: true
-                )
-            }
         }
     }
 
@@ -406,6 +429,11 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
 
         @Binding var isScrolledToBottom: Bool
         @Binding var isScrolledToTop: Bool
+
+        /// Captured at UIKeyboardWillShow. Used by the UIKeyboardDidShow
+        /// handler to decide whether to re-anchor contentOffset to zero
+        /// after SwiftUI's keyboard-avoidance nudged it off the bottom.
+        var wasAtBottomBeforeKeyboard: Bool = false
 
         let messageBuilder: MessageBuilderClosure?
         let mainHeaderBuilder: (()->AnyView)?
