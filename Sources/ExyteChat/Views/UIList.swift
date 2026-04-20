@@ -247,18 +247,22 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
         // table causes a visible content shift: UITableView preserves
         // contentOffset.y across inserts, but the row that lives at that
         // offset has changed. For rows taller than the viewport the user
-        // sees the viewport "jump" into the middle of the previous message.
+        // sees the viewport "jump" into the middle of the previous message
+        // for one render frame before a follow-up scrollToRow corrects it.
         //
-        // Wrap the insert in `UIView.setAnimationsEnabled(false)` (same
-        // pattern step 3 uses for edits) so the insert lands in a single
-        // frame with no in-progress animation, then synchronously scroll to
-        // the newest row. End result: the visible viewport transitions
-        // atomically from "old newest" to "new newest" with no intermediate
-        // frames of wrong content. Only scoped to .conversation because
+        // Fix: wrap insert + scrollToRow in one CATransaction with
+        // setDisableActions(true). This disables *implicit* layer actions
+        // (which is what causes the visible intermediate-offset frame)
+        // without suppressing UITableView's *explicit* row-insert animation.
+        // End result: the row still slides in with the default animation,
+        // but the viewport transitions atomically from "old newest" to
+        // "new newest" with no flash. Only scoped to .conversation because
         // .comments has the opposite scroll convention.
         let shouldAnchorToNewest = type == .conversation && !splitInfo.insertOperations.isEmpty
+
         if shouldAnchorToNewest {
-            UIView.setAnimationsEnabled(false)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
         }
 
         tableView.beginUpdates()
@@ -272,14 +276,11 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
            tableView.numberOfSections > 0,
            tableView.numberOfRows(inSection: 0) > 0
         {
-            // scrollToRow targets "this row flush with the visible bottom"
-            // which accounts for the input bar / safe-area inset at the
-            // bottom of the table's frame. setContentOffset(.zero) puts the
-            // newest row flush with the frame's bottom, but that's behind
-            // the input bar — the row ends up technically on-screen but
-            // visually clipped by the overlay. Verified on-device: tapping
-            // the chevron (which calls this same scrollToRow but animated)
-            // lands at the correct final position.
+            // scrollToRow(at: .bottom) in an inverted table places the
+            // target row flush with the visible bottom of the content area
+            // (accounting for the input bar / safe-area inset). Verified
+            // on-device: the chevron uses the same call animated and lands
+            // at the correct final position.
             tableView.scrollToRow(
                 at: IndexPath(row: 0, section: 0),
                 at: .bottom,
@@ -288,7 +289,7 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
         }
 
         if shouldAnchorToNewest {
-            UIView.setAnimationsEnabled(true)
+            CATransaction.commit()
         }
 
         if !isScrollEnabled {
