@@ -253,6 +253,28 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
         if !isScrollEnabled {
             tableContentHeight = tableView.contentSize.height
         }
+
+        // Post-insert anchor to the newest row.
+        //
+        // Inserting at data index 0 of an inverted table causes a visible
+        // content shift: UITableView preserves contentOffset.y across
+        // inserts, but the data row that lives at that offset has changed.
+        // For tall previous rows (longer than the viewport) the user sees
+        // the viewport "jump" into the middle of the previous message.
+        //
+        // Scrolling to row 0 synchronously with animated=false produces a
+        // single-frame teleport to the correct final state — no mid-jump,
+        // no animated scroll-back. Only scoped to .conversation because
+        // .comments has the opposite scroll convention.
+        if type == .conversation, !splitInfo.insertOperations.isEmpty {
+            guard tableView.numberOfSections > 0,
+                  tableView.numberOfRows(inSection: 0) > 0 else { return }
+            tableView.scrollToRow(
+                at: IndexPath(row: 0, section: 0),
+                at: .bottom,
+                animated: false
+            )
+        }
     }
 
     // MARK: - Operations
