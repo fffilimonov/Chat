@@ -272,15 +272,19 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
            tableView.numberOfSections > 0,
            tableView.numberOfRows(inSection: 0) > 0
         {
-            // Direct contentOffset write, not scrollToRow. In an inverted
-            // conversation table contentOffset.y=0 is definitionally "newest
-            // row flush with the visual bottom", so we don't need the table
-            // to know cell heights first. scrollToRow depends on estimated
-            // heights settling (the table has to layout cells to find the
-            // target y) which in practice took ~200ms before landing —
-            // visible as frames of wrong content. setContentOffset(.zero)
-            // lands in one frame.
-            tableView.setContentOffset(.zero, animated: false)
+            // scrollToRow targets "this row flush with the visible bottom"
+            // which accounts for the input bar / safe-area inset at the
+            // bottom of the table's frame. setContentOffset(.zero) puts the
+            // newest row flush with the frame's bottom, but that's behind
+            // the input bar — the row ends up technically on-screen but
+            // visually clipped by the overlay. Verified on-device: tapping
+            // the chevron (which calls this same scrollToRow but animated)
+            // lands at the correct final position.
+            tableView.scrollToRow(
+                at: IndexPath(row: 0, section: 0),
+                at: .bottom,
+                animated: false
+            )
         }
 
         if shouldAnchorToNewest {
