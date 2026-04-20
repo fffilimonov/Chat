@@ -243,6 +243,24 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
         //print("4 apply inserts", runID)
         updateContextClosure(sections)
 
+        // For .conversation chats, inserting at data index 0 of an inverted
+        // table causes a visible content shift: UITableView preserves
+        // contentOffset.y across inserts, but the row that lives at that
+        // offset has changed. For rows taller than the viewport the user
+        // sees the viewport "jump" into the middle of the previous message.
+        //
+        // Wrap the insert in `UIView.setAnimationsEnabled(false)` (same
+        // pattern step 3 uses for edits) so the insert lands in a single
+        // frame with no in-progress animation, then synchronously scroll to
+        // the newest row. End result: the visible viewport transitions
+        // atomically from "old newest" to "new newest" with no intermediate
+        // frames of wrong content. Only scoped to .conversation because
+        // .comments has the opposite scroll convention.
+        let shouldAnchorToNewest = type == .conversation && !splitInfo.insertOperations.isEmpty
+        if shouldAnchorToNewest {
+            UIView.setAnimationsEnabled(false)
+        }
+
         tableView.beginUpdates()
         for operation in splitInfo.insertOperations {
             applyOperation(operation, tableView: tableView)
@@ -250,30 +268,23 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
         tableView.endUpdates()
         //print("4 finished inserts", runID)
 
-        if !isScrollEnabled {
-            tableContentHeight = tableView.contentSize.height
-        }
-
-        // Post-insert anchor to the newest row.
-        //
-        // Inserting at data index 0 of an inverted table causes a visible
-        // content shift: UITableView preserves contentOffset.y across
-        // inserts, but the data row that lives at that offset has changed.
-        // For tall previous rows (longer than the viewport) the user sees
-        // the viewport "jump" into the middle of the previous message.
-        //
-        // Scrolling to row 0 synchronously with animated=false produces a
-        // single-frame teleport to the correct final state — no mid-jump,
-        // no animated scroll-back. Only scoped to .conversation because
-        // .comments has the opposite scroll convention.
-        if type == .conversation, !splitInfo.insertOperations.isEmpty {
-            guard tableView.numberOfSections > 0,
-                  tableView.numberOfRows(inSection: 0) > 0 else { return }
+        if shouldAnchorToNewest,
+           tableView.numberOfSections > 0,
+           tableView.numberOfRows(inSection: 0) > 0
+        {
             tableView.scrollToRow(
                 at: IndexPath(row: 0, section: 0),
                 at: .bottom,
                 animated: false
             )
+        }
+
+        if shouldAnchorToNewest {
+            UIView.setAnimationsEnabled(true)
+        }
+
+        if !isScrollEnabled {
+            tableContentHeight = tableView.contentSize.height
         }
     }
 
