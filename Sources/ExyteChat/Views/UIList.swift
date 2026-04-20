@@ -70,6 +70,17 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
             DispatchQueue.main.async {
                 if !context.coordinator.sections.isEmpty {
                     guard tableView.numberOfSections > 0, tableView.numberOfRows(inSection: 0) > 0 else { return }
+                    // If the insert path (step 4 in applyUpdatesToTable) already
+                    // anchored the viewport to newest, contentOffset.y is ≈ 0
+                    // and another animated scroll is a redundant visible jump —
+                    // the user perceives it as "scroll up then scroll down" on
+                    // send with a tall last reply. Skip the animation in that
+                    // case. Chevron-tap reaches here too but only when the user
+                    // was NOT at bottom, so contentOffset.y > 0 and the animation
+                    // plays normally.
+                    if abs(tableView.contentOffset.y) < 1 {
+                        return
+                    }
                     tableView.scrollToRow(at: IndexPath(row: 0, section: 0), at: .bottom, animated: true)
                 }
             }
@@ -246,24 +257,16 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
         // For .conversation chats, inserting at data index 0 of an inverted
         // table causes a visible content shift: UITableView preserves
         // contentOffset.y across inserts, but the row that lives at that
-        // offset has changed. For rows taller than the viewport the user
-        // sees the viewport "jump" into the middle of the previous message
-        // for one render frame before a follow-up scrollToRow corrects it.
+        // offset has changed. We anchor the viewport to the newly inserted
+        // row with a synchronous scrollToRow(animated: false). The real
+        // visible bug the user saw ("scroll up then scroll down" on send
+        // with a tall last reply) was the redundant 300ms-delayed animated
+        // `.onScrollToBottom` posted by ChatView fighting with this scroll
+        // — that observer now no-ops when we're already at bottom.
         //
-        // Fix: wrap insert + scrollToRow in one CATransaction with
-        // setDisableActions(true). This disables *implicit* layer actions
-        // (which is what causes the visible intermediate-offset frame)
-        // without suppressing UITableView's *explicit* row-insert animation.
-        // End result: the row still slides in with the default animation,
-        // but the viewport transitions atomically from "old newest" to
-        // "new newest" with no flash. Only scoped to .conversation because
-        // .comments has the opposite scroll convention.
+        // Only scoped to .conversation because .comments has the opposite
+        // scroll convention.
         let shouldAnchorToNewest = type == .conversation && !splitInfo.insertOperations.isEmpty
-
-        if shouldAnchorToNewest {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-        }
 
         tableView.beginUpdates()
         for operation in splitInfo.insertOperations {
@@ -286,10 +289,6 @@ struct UIList<MessageContent: View, InputView: View>: UIViewRepresentable {
                 at: .bottom,
                 animated: false
             )
-        }
-
-        if shouldAnchorToNewest {
-            CATransaction.commit()
         }
 
         if !isScrollEnabled {
